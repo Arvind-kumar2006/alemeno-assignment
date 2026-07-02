@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL Database ──────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: alemeno_postgres
+    environment:
+      POSTGRES_USER: alemeno
+      POSTGRES_PASSWORD: alemeno
+      POSTGRES_DB: alemeno
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alemeno"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (Message Broker) ───────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: alemeno_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI Application ──────────────────────────────────────────────────
+  api:
+    build: .
+    container_name: alemeno_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://alemeno:alemeno@postgres:5432/alemeno
+      REDIS_URL: redis://redis:6379/0
+      GROQ_API_KEY: ${GROQ_API_KEY}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Celery Worker ────────────────────────────────────────────────────────
+  worker:
+    build: .
+    container_name: alemeno_worker
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      DATABASE_URL: postgresql://alemeno:alemeno@postgres:5432/alemeno
+      REDIS_URL: redis://redis:6379/0
+      GROQ_API_KEY: ${GROQ_API_KEY}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
